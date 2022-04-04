@@ -1,0 +1,4 @@
+beautifulsoup4==4.10.0
+contractions==0.1.68
+nltk==3.7
+numpy==1.22.3
