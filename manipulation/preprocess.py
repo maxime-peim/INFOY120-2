@@ -41,7 +41,9 @@ def preprocess(file):
         normalized = normalize(denoised)
     return normalized
 
-def preprocess_files(input_folder, output_folder):
+def preprocess_files(input_folder, output_folder, force=False):
+    if any(output_folder.iterdir()) and not force:
+        return
     utils.map_files(preprocess, output_folder, input_folder.iterdir())
 
 if __name__ == '__main__':

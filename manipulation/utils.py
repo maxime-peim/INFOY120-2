@@ -2,6 +2,13 @@ import sys
 import pathlib
 import argparse
 
+RAW_DIR = 'raw'
+EXTRACTED_DIR = 'extracted'
+PREPROCESSED_DIR = 'preprocessed'
+
+PREPROCESSED_FILE = 'preprocessed.csv'
+LABELS_FILE = 'labels.csv'
+
 def io_folder_argparse():
     parser = argparse.ArgumentParser(description='Extract infos from eml files.')
     parser.add_argument('input_folder', metavar='IN', type=pathlib.Path)

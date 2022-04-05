@@ -20,7 +20,9 @@ def extract(eml_file):
     extracted = [sub, payload]
     return '\n'.join(extracted)
 
-def extract_files(input_folder, output_folder):
+def extract_files(input_folder, output_folder, force=False):
+    if any(output_folder.iterdir()) and not force:
+        return
     utils.map_files(extract, output_folder, input_folder.glob('*.eml'))
 
 if __name__ == '__main__':
