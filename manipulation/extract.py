@@ -10,20 +10,19 @@ def extract(eml_file):
     with eml_file.open('rb') as fp:
         parsed = email.message_from_binary_file(fp)
 
-    sub = str(parsed.get('subject', ''))
+    subject = str(parsed.get('subject', ''))
+    from_ = str(parsed.get('from', ''))
     payload = parsed.get_payload()
     if isinstance(payload, list):
         payload = payload[0]
     if not isinstance(payload, str):
         payload = str(payload)
     
-    extracted = [sub, payload]
+    extracted = [from_, subject, payload]
     return '\n'.join(extracted)
 
 def extract_files(input_folder, output_folder, force=False):
-    if any(output_folder.iterdir()) and not force:
-        return
-    utils.map_files(extract, output_folder, input_folder.glob('*.eml'))
+    utils.map_files(extract, output_folder, input_folder.glob('*.eml'), force=force)
 
 if __name__ == '__main__':
     input_folder, output_folder = utils.io_folder_argparse()

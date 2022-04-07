@@ -1,9 +1,3 @@
-# Author: Peter Prettenhofer <peter.prettenhofer@gmail.com>
-#         Olivier Grisel <olivier.grisel@ensta.org>
-#         Mathieu Blondel <mathieu@mblondel.org>
-#         Lars Buitinck
-# License: BSD 3 clause
-
 # https://scikit-learn.org/stable/auto_examples/text/plot_document_classification_20newsgroups.html#sphx-glr-auto-examples-text-plot-document-classification-20newsgroups-py
 
 import pathlib
@@ -14,20 +8,8 @@ from time import time
 
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.feature_extraction.text import HashingVectorizer
-from sklearn.feature_selection import SelectFromModel
 from sklearn.feature_selection import SelectKBest, chi2
-from sklearn.linear_model import RidgeClassifier
-from sklearn.pipeline import Pipeline
-from sklearn.svm import LinearSVC
-from sklearn.linear_model import SGDClassifier
-from sklearn.linear_model import Perceptron
-from sklearn.linear_model import PassiveAggressiveClassifier
-from sklearn.naive_bayes import BernoulliNB, ComplementNB, MultinomialNB, GaussianNB
-from sklearn.neighbors import KNeighborsClassifier
-from sklearn.neighbors import NearestCentroid
-from sklearn.ensemble import RandomForestClassifier
 from sklearn.utils.extmath import density
-from sklearn import metrics
 
 from . import utils
 
@@ -68,7 +50,7 @@ def load_preprocessed_data(data_folder, force=False):
     return data_df
 
 
-def classify(training_folder, testing_folder, *, select_chi2, print_top10, use_hashing, n_features, force=False):
+def classify(training_folder, testing_folder, classifiers, *, select_chi2, print_top10, use_hashing, n_features, force=False, plot=False):
     
     print("Loading preprocessed data... ", end="", flush=True)
     
@@ -88,6 +70,7 @@ def classify(training_folder, testing_folder, *, select_chi2, print_top10, use_h
     else:
         vectorizer = TfidfVectorizer(sublinear_tf=True, max_df=0.5, stop_words="english")
         X_train = vectorizer.fit_transform(data_train.data)
+    
     duration = time() - t0
     print(f"done in {duration:.03}s")
     print("n_samples: {0[0]}, n_features: {0[1]}\n".format(X_train.shape))
@@ -139,19 +122,16 @@ def classify(training_folder, testing_folder, *, select_chi2, print_top10, use_h
         pred_df.index.name = 'id'
         pred_df.index += 1
         
-        score = clf.score(X_train, y_train)
+        scores = utils.get_scores(clf, X_train, y_train)
+        score = scores['Accuracy']
         
-        pred_train = clf.predict(X_train)
-        print(metrics.confusion_matrix(y_train, pred_train))
-        
-        if output_folder is not None:
-            clf_folder = output_folder.joinpath(f'{clf_descr}')
-            clf_folder.mkdir(exist_ok=True, parents=True)
-            pred_df.applymap(lambda x: int(x != 'spam')) \
-                .to_csv(clf_folder.joinpath('labels.csv'), index_label='id')
-        
-            with clf_folder.joinpath('params.txt').open('w') as fp:
-                fp.write(repr(clf))
+        clf_folder = output_folder.joinpath(f'{clf_descr}')
+        clf_folder.mkdir(exist_ok=True, parents=True)
+        pred_df.applymap(lambda x: int(x != 'spam')) \
+            .to_csv(clf_folder.joinpath('labels.csv'), index_label='id')
+    
+        with clf_folder.joinpath('params.txt').open('w') as fp:
+            fp.write(repr(clf))
 
         if hasattr(clf, "coef_"):
             print(f"dimensionality: {clf.coef_.shape[1]}")
@@ -167,63 +147,10 @@ def classify(training_folder, testing_folder, *, select_chi2, print_top10, use_h
         return clf_descr, score, train_time, test_time
     
     results = []
-    for clf, name in (
-        (RidgeClassifier(tol=1e-2, solver="sag"), "Ridge Classifier"),
-        (Perceptron(max_iter=50), "Perceptron"),
-        (PassiveAggressiveClassifier(max_iter=50), "Passive-Aggressive"),
-        (KNeighborsClassifier(n_neighbors=10), "kNN"),
-        (RandomForestClassifier(), "Random forest"),
-    ):
+    for clf in classifiers:
         print("=" * 80)
-        print(name)
+        print(repr(clf))
         results.append(benchmark(clf))
-
-    for penalty in ["l2", "l1"]:
-        print("=" * 80)
-        print(f"{penalty.upper()} penalty")
-        # Train Liblinear model
-        results.append(benchmark(LinearSVC(penalty=penalty, dual=False, tol=1e-3)))
-
-        # Train SGD model
-        results.append(benchmark(SGDClassifier(alpha=0.0001, max_iter=50, penalty=penalty)))
-
-    # Train SGD with Elastic Net penalty
-    print("=" * 80)
-    print("Elastic-Net penalty")
-    results.append(
-        benchmark(SGDClassifier(alpha=0.0001, max_iter=50, penalty="elasticnet"))
-    )
-
-    # Train NearestCentroid without threshold
-    print("=" * 80)
-    print("NearestCentroid (aka Rocchio classifier)")
-    results.append(benchmark(NearestCentroid()))
-
-    # Train sparse Naive Bayes classifiers
-    print("=" * 80)
-    print("Naive Bayes")
-    # results.append(benchmark(GaussianNB(), print_top10=print_top10))
-    results.append(benchmark(MultinomialNB(alpha=0.01)))
-    results.append(benchmark(BernoulliNB(alpha=0.01)))
-    results.append(benchmark(ComplementNB(alpha=0.1)))
-
-    print("=" * 80)
-    print("LinearSVC with L1-based feature selection")
-    # The smaller C, the stronger the regularization.
-    # The more regularization, the more sparsity.
-    results.append(
-        benchmark(
-            Pipeline(
-                [
-                    (
-                        "feature_selection",
-                        SelectFromModel(LinearSVC(penalty="l1", dual=False, tol=1e-3)),
-                    ),
-                    ("classification", LinearSVC(penalty="l2")),
-                ]
-            )
-        )
-    )
 
     indices = np.arange(len(results))
 
@@ -236,18 +163,19 @@ def classify(training_folder, testing_folder, *, select_chi2, print_top10, use_h
     best_clf_i = np.argmax(score)
     print(f"Best classifiers: {clf_names[best_clf_i]} -> {score[best_clf_i]}")
 
-    plt.figure(figsize=(12, 8))
-    plt.title("Score")
-    plt.barh(indices, score, 0.2, label="score", color="navy")
-    plt.barh(indices + 0.3, training_time, 0.2, label="training time", color="c")
-    plt.barh(indices + 0.6, test_time, 0.2, label="test time", color="darkorange")
-    plt.yticks(())
-    plt.legend(loc="best")
-    plt.subplots_adjust(left=0.25)
-    plt.subplots_adjust(top=0.95)
-    plt.subplots_adjust(bottom=0.05)
+    if plot:
+        plt.figure(figsize=(12, 8))
+        plt.title("Score")
+        plt.barh(indices, score, 0.2, label="score", color="navy")
+        plt.barh(indices + 0.3, training_time, 0.2, label="training time", color="c")
+        plt.barh(indices + 0.6, test_time, 0.2, label="test time", color="darkorange")
+        plt.yticks(())
+        plt.legend(loc="best")
+        plt.subplots_adjust(left=0.25)
+        plt.subplots_adjust(top=0.95)
+        plt.subplots_adjust(bottom=0.05)
 
-    for i, c in zip(indices, clf_names):
-        plt.text(-0.3, i, c)
+        for i, c in zip(indices, clf_names):
+            plt.text(-0.3, i, c)
 
-    plt.show()
+        plt.show()
