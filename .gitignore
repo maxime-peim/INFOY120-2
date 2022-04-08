@@ -1,6 +1,5 @@
 __pycache__/
 
-data/*/extracted/
-data/*/preprocessed/
 data/*/labels/
+data/*/extracted.csv
 data/*/preprocessed.csv

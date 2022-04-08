@@ -1,4 +1,4 @@
 from . import utils
-from .extract import extract_files
-from .preprocess import preprocess_files
+from .extract import extract
+from .preprocess import preprocess
 from .classify import classify
