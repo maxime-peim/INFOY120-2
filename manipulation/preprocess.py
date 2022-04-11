@@ -1,64 +1,23 @@
-import contractions
+from __future__ import annotations
+
 import re
 import nltk
-import unicodedata
 import pandas as pd
-
-from bs4 import BeautifulSoup
-from nltk.stem import WordNetLemmatizer
-from nltk.corpus import wordnet
+import spacy
+from pandarallel import pandarallel
 
 from . import utils
 
-nltk.download('punkt')
-nltk.download('stopwords')
-nltk.download('wordnet')
-nltk.download('omw-1.4')
-nltk.download('averaged_perceptron_tagger')
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from pathlib import Path
+    from pandas import DataFrame
 
-def denoise(content):
-    content = BeautifulSoup(content, 'html.parser').get_text()
-    content = contractions.fix(content)
-    return content
+nlp = spacy.load("en_core_web_sm")
+ENGLISH_WORDS = nltk.corpus.words.words()
+STOP_WORDS = nltk.corpus.stopwords.words('english')
 
-def _get_wordnet_pos(word):
-    """Map POS tag to first character lemmatize() accepts"""
-    tag = nltk.pos_tag([word])[0][1][0].upper()
-    tag_dict = {"J": wordnet.ADJ,
-                "N": wordnet.NOUN,
-                "V": wordnet.VERB,
-                "R": wordnet.ADV}
-
-    return tag_dict.get(tag, wordnet.NOUN)
-
-def _replace_urls(text):
-    url_regex = r'(https?:\/\/(?:www\.|(?!www))[a-zA-Z0-9][a-zA-Z0-9-]+[a-zA-Z0-9]\.[^\s]{2,}|www\.[a-zA-Z0-9][a-zA-Z0-9-]+[a-zA-Z0-9]\.[^\s]{2,}|https?:\/\/(?:www\.|(?!www))[a-zA-Z0-9]+\.[^\s]{2,}|www\.[a-zA-Z0-9]+\.[^\s]{2,})'
-    text = re.sub(url_regex, "URL", text)
-    return text
-
-def _replace_money(text):
-    money_regex = r'(NUMBER\s?(\$| dollars?))'
-    text = re.sub(money_regex, "MONEY", text)
-    return text
-
-def _simplify_punctuation(text):
-    """
-    This function simplifies doubled or more complex punctuation. The exception is '...'.
-    """
-    corrected = str(text)
-    corrected = re.sub(r'([!?,;])+', r'', corrected)
-    corrected = re.sub(r'\.{2,}', r'...', corrected)
-    return corrected
-
-def _simplify_number(text):
-    """
-    This function simplifies doubled or more complex punctuation. The exception is '...'.
-    """
-    corrected = str(text)
-    corrected = re.sub(r'((\d+\.?\d*)|(\d*\.?\d+))', r'NUMBER', corrected)
-    return corrected
-
-def _normalize_whitespace(text):
+def _normalize_whitespace(text: str) -> str:
     """
     This function normalizes whitespaces, removing duplicates.
     """
@@ -69,44 +28,45 @@ def _normalize_whitespace(text):
     corrected = re.sub(r"(\t)+",r" ", corrected)
     return corrected.strip(" ")
 
-def _simplify(text):
-    corrected = text.lower()
+def normalize_subject(subject: str) -> str:
+    corrected = str(subject).lower()
     corrected = _normalize_whitespace(corrected)
-    corrected = _simplify_punctuation(corrected)
-    corrected = _replace_urls(corrected)
-    corrected = _simplify_number(corrected)
-    corrected = _replace_money(corrected)
+    
+    doc = nlp(corrected)
+    tokens = [token.lemma_ for token in doc]
+    tokens[:] = map(lambda w: w.encode('ascii', 'ignore').decode('utf-8', 'ignore'), tokens)
+    tokens[:] = filter(lambda w: w not in STOP_WORDS, tokens)
+    corrected = " ".join(tokens)
+    
     return corrected
 
-def normalize(content):
-    content = _simplify(content)
-    wnl = WordNetLemmatizer()
+def normalize_content(content: str) -> str:
+    corrected = str(content).lower()
+    corrected = _normalize_whitespace(corrected)
+    
+    doc = nlp(corrected)
+    tokens = [token.lemma_ for token in doc]
+    tokens[:] = map(lambda w: w.encode('ascii', 'ignore').decode('utf-8', 'ignore'), tokens)
+    tokens[:] = filter(lambda w: w in ENGLISH_WORDS and w.isalpha(), tokens)
+    tokens[:] = filter(lambda w: w not in STOP_WORDS, tokens)
+    tokens[:] = filter(lambda w: 2 < len(w), tokens)
+    corrected = " ".join(tokens)
+    
+    return corrected
 
-    words    = nltk.word_tokenize(content)
-    # words[:] = filter(lambda w: len(w) <= word_length_limit, words)
-    words[:] = filter(lambda w: w.isalpha(), words)
-    words[:] = map(lambda w: unicodedata.normalize('NFKD',  w), words)
-    words[:] = map(lambda w: w.encode('ascii', 'ignore').decode('utf-8', 'ignore'), words)
-    # words[:] = filter(lambda w: not all(c in string.punctuation for c in w), words)
-    # words[:] = filter(lambda w: not all(c.isdigit() for c in w), words)
-    words[:] = filter(lambda w: w not in nltk.corpus.stopwords.words('english'), words)
-    words[:] = map(lambda w: wnl.lemmatize(w, pos=_get_wordnet_pos(w)).strip(), words)
-    words[:] = filter(lambda w: w != '', words)
-
-    return ' '.join(words)
-
-def denoise_and_normalize(content):
-    return normalize(denoise(content))
-
-def preprocess(folder, extracted_df=None, force=False):
-    print("Preprocessing... ", end="", flush=True)
+def preprocess(folder: Path, extracted_df=None, force=False) -> DataFrame:
+    print("Preprocessing... ", flush=True)
     preprocessed_file = folder.joinpath(utils.PREPROCESSED_FILE)
     
     if preprocessed_file.exists() and not force:
-        print("loaded from file", flush=True)
+        print(" loaded from file", flush=True)
         preprocessed_df = pd.read_csv(preprocessed_file, index_col='id')
         preprocessed_df.fillna('', inplace=True)
         return preprocessed_df
+    
+    pandarallel.initialize(progress_bar=True)
+    nltk.download('stopwords')
+    nltk.download('words')
     
     if extracted_df is None:
         extracted_file = folder.joinpath(utils.EXTRACTED_FILE)
@@ -115,9 +75,19 @@ def preprocess(folder, extracted_df=None, force=False):
         extracted_df = pd.read_csv(extracted_file, index_col='id')
     
     preprocessed_df = extracted_df.copy()
-    preprocessed_df['content'] = preprocessed_df['content'].apply(denoise_and_normalize)
+    normalization_functions = {}
+    for attr_name, func in globals().items():
+        if attr_name.startswith('normalize_'):
+            name = attr_name.split('_')[1]
+            normalization_functions[name] = func
+    
+    for column in preprocessed_df.columns:
+        if column in normalization_functions:
+            print(f" preprocessing {column}...", flush=True)
+            preprocessed_df[column] = preprocessed_df[column].parallel_apply(normalization_functions[column])
+    
     preprocessed_df.fillna('', inplace=True)
     preprocessed_df.to_csv(preprocessed_file)
     
-    print("done preprocessing", flush=True)
+    print(" done preprocessing", flush=True)
     return preprocessed_df

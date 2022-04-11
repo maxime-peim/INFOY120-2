@@ -1,23 +1,37 @@
-# https://scikit-learn.org/stable/auto_examples/text/plot_document_classification_20newsgroups.html#sphx-glr-auto-examples-text-plot-document-classification-20newsgroups-py
+from __future__ import annotations
 
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
+import json
+from datetime import datetime
 from time import time
-from sklearn import metrics
-from functools import partial
+from pprint import pprint
 
+from sklearn.metrics import f1_score, make_scorer
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.feature_selection import SelectKBest, chi2
-from sklearn.model_selection import train_test_split
-from sklearn.utils.extmath import density
+from sklearn.model_selection import GridSearchCV
+from sklearn.preprocessing import FunctionTransformer
+from sklearn.pipeline import FeatureUnion, Pipeline
 
 from . import utils
 
-def benchmark(clf, output_folder, X_train, y_train, X_test, y_test=None):
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from sklearn.base import BaseEstimator
+    from pathlib import Path
+    from pandas import DataFrame
+    from typing import Any, Union
+    
+    Parameters = list[str, list[Any]]
+    ParametersDict = dict[str, Parameters]
+    ClassifierParameters = tuple[str, ParametersDict]
+    ClassifierScore = tuple[str, float, float, float]
+
+def benchmark(clf: BaseEstimator, parameters_names: list[str], output_folder: Path, X_train: np.array, y_train: Union[np.array, DataFrame], X_test: np.array) -> ClassifierScore:
     print("_" * 80)
     print("Training: ")
-    print(clf)
+    
     t0 = time()
     clf.fit(X_train, y_train)
     train_time = time() - t0
@@ -28,80 +42,87 @@ def benchmark(clf, output_folder, X_train, y_train, X_test, y_test=None):
     test_time = time() - t0
     print(f"test time: {test_time:.03}s")
     
-    clf_descr = repr(clf)
-    
     pred_df = pd.DataFrame(pred, columns=["prediction"])
     pred_df.index.name = 'id'
     pred_df.index += 1
     
-    score = 0
-    if y_test is not None:
-        score = metrics.accuracy_score(y_test, pred)
-        
-        print("classification report:")
-        print(metrics.classification_report(y_test, pred))
-
-        print("confusion matrix:")
-        print(metrics.confusion_matrix(y_test, pred))
+    all_parameters = clf.best_estimator_.get_params()
+    optimal_parameters = {
+        name: all_parameters[name]
+        for name in parameters_names
+    }
     
-    else:
-        clf_folder = output_folder.joinpath(f'{clf_descr}')
-        clf_folder.mkdir(exist_ok=True, parents=True)
-        pred_df.applymap(lambda x: int(x != 'spam')) \
-            .to_csv(clf_folder.joinpath('labels.csv'), index_label='id')
-
-        with clf_folder.joinpath('params.txt').open('w') as fp:
-            fp.write(repr(clf))
+    clf_descr = all_parameters['clf'].__class__.__name__
+    
+    pprint(all_parameters)
+    # print(clf.best_estimator_.feature_names_in_)
+    
+    score = clf.best_score_
+    formatted = pred_df.applymap(lambda x: int(x != 'spam'))
+    formatted.to_csv(output_folder.joinpath('tmp.csv'), index_label='id')
+    
+    clf_folder = output_folder.joinpath(clf_descr).joinpath(datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
+    clf_folder.mkdir(exist_ok=True, parents=True)
+    labels_file = clf_folder.joinpath(utils.LABELS_FILE)
+    if labels_file.exists():
+        labels_file.unlink()
+    formatted.to_csv(labels_file, index_label='id')
+    with clf_folder.joinpath('params.txt').open('w') as fp:
+        json.dump(optimal_parameters, fp, indent=4, sort_keys=True)
     
     return clf_descr, score, train_time, test_time
 
-def classify(train_df, test_df, classifiers, *, training_folder, testing_folder, select_chi2, split_training=None, force=False, plot=False):
+def classify(classifiers: list[ClassifierParameters], training_folder: Path, testing_folder: Path, force=None, plot=False):
 
-    y_train = train_df.prediction
-    y_test = None
-
-    print("Extracting features from the training data using a sparse vectorizer")
-    t0 = time()
-    #vectorizer = TfidfVectorizer()
-    vectorizer = TfidfVectorizer(sublinear_tf=True, stop_words="english")
-    X_train = vectorizer.fit_transform(train_df.content)
-    duration = time() - t0
-    print(f"done in {duration:.03}s")
-    print("n_samples: {0[0]}, n_features: {0[1]}\n".format(X_train.shape))
+    force_extract = 'extract' in force if force is not None else False
+    # force preprocessing if forced extraction
+    force_preprocess = ('preprocess' in force if force is not None else False) or force_extract
     
-    if split_training is not None:
-        print("Splitting the train dataset\n")
-        X_train, X_test, y_train, y_test = train_test_split(X_train, y_train, test_size=split_training, random_state=42)
-    else:
-        print("Extracting features from the test data using the same vectorizer")
-        t0 = time()
-        X_test = vectorizer.transform(test_df.content)
-        duration = time() - t0
-        print(f"done in {duration:.03}s")
-        print("n_samples: {0[0]}, n_features: {0[1]}\n".format(X_test.shape))
+    # get preprocessed df from training dataset
+    train_df = utils.extract_and_preprocess(training_folder, force_extract=force_extract, force_preprocess=force_preprocess)
+    # get preprocessed df from testing dataset
+    test_df = utils.extract_and_preprocess(testing_folder, force_extract=force_extract, force_preprocess=force_preprocess)
 
-    feature_names = vectorizer.get_feature_names_out()
-
-    if select_chi2:
-        print("Extracting %d best features by a chi-squared test" % select_chi2)
-        t0 = time()
-        ch2 = SelectKBest(chi2, k=select_chi2)
-        X_train = ch2.fit_transform(X_train, y_train)
-        X_test = ch2.transform(X_test)
-        if feature_names is not None:
-            # keep selected feature names
-            feature_names = feature_names[ch2.get_support()]
-        duration = time() - t0
-        print(f"done in {duration:.03}s\n")
-
+    train_df.sort_index(inplace=True)
+    test_df.sort_index(inplace=True)
+    
     output_folder = testing_folder.joinpath("labels")
     output_folder.mkdir(exist_ok=True, parents=True)
     
+    y_train = train_df.prediction
+    y_test = None
+    
     results = []
-    for clf in classifiers:
+    for clf, parameters in classifiers:
+    
+        vectorizer = FeatureUnion([
+                    ('content_tfidf', 
+                    Pipeline([('extract_field',
+                                FunctionTransformer(lambda x: x['content'], 
+                                                    validate=False)),
+                                ('tfidf',
+                                 TfidfVectorizer())])),
+                    ('subject_tfidf', 
+                    Pipeline([('extract_field', 
+                                FunctionTransformer(lambda x: x['subject'], 
+                                                    validate=False)),
+                                ('tfidf', 
+                                 TfidfVectorizer())])),
+                    ],
+                    n_jobs=-1)
+        
+        pipeline = Pipeline(
+            [
+                ("vect", vectorizer),
+                ("clf", clf),
+            ]
+        )
+        
+        gs_vect = GridSearchCV(pipeline, parameters, cv=10, n_jobs=-1, scoring=make_scorer(f1_score, pos_label="ham"), verbose=4)
+    
         print("=" * 80)
-        print(repr(clf))
-        results.append(benchmark(clf, output_folder, X_train, y_train, X_test, y_test=y_test))
+        print(clf.__class__.__name__)
+        results.append(benchmark(gs_vect, list(parameters.keys()), output_folder, train_df, y_train, test_df))
 
     indices = np.arange(len(results))
 
