@@ -1,5 +1,15 @@
 __pycache__/
 
+.trunk/
+.flake8
+.isort.cfg
+.markdownlint.yaml
+
 data/*/labels/
+data/*/saved/
+data/*/preprocessed/
 data/*/extracted.csv
 data/*/preprocessed.csv
+
+Digraph*
+pipeline.py
