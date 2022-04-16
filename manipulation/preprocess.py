@@ -58,14 +58,14 @@ def normalize_content(content: str) -> str:
     )
     tokens[:] = filter(lambda w: w.isalpha() and w in ENGLISH_WORDS, tokens)
     tokens[:] = filter(lambda w: w not in STOP_WORDS, tokens)
-    tokens[:] = filter(lambda w: 2 < len(w), tokens)
+    tokens[:] = filter(lambda w: 3 < len(w), tokens)
     corrected = " ".join(tokens)
 
     return corrected
 
 
 def preprocess(folder: Path, extracted_df=None, force=False) -> DataFrame:
-    print("Preprocessing... ", flush=True)
+    print("Preprocessing...", flush=True)
     preprocessed_file = folder.joinpath(utils.PREPROCESSED_FILE)
 
     if preprocessed_file.exists() and not force:

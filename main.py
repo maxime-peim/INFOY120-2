@@ -44,30 +44,38 @@ from sklearn.svm import SVC, LinearSVC, OneClassSVM
 from sklearn.tree import DecisionTreeClassifier
 
 import manipulation.utils as utils
-from manipulation import classify
+from manipulation import analyse, classify, extract, preprocess
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
+    parser.add_argument(
+        "actions",
+        nargs="*",
+        choices=["classify", "analyse", "extract", "preprocess", "all"],
+        default="all",
+    )
     parser.add_argument("--training-folder", type=Path, default=utils.TRAINING_DATA)
     parser.add_argument("--testing-folder", type=Path, default=utils.TESTING_DATA)
-    parser.add_argument("-f", "--force", nargs="*", choices=["extract", "preprocess"])
+    parser.add_argument("--analyse-folder", type=Path, default=utils.ANALYSE_FOLDER)
     parser.add_argument("-p", "--plot", action="store_true")
 
     args = parser.parse_args()
+    actions = args.actions
+    all_actions = "all" in actions
 
     classifiers = [
         (
-            RandomForestClassifier(random_state=42),
+            RandomForestClassifier(random_state=42, n_jobs=-1),
             {
                 #'clf__bootstrap': [True, False],
-                "clf__max_depth": range(10, 110, 10),
+                "clf__max_depth": [None, *list(range(10, 110, 10))],
                 #'clf__max_features': ['auto', 'sqrt'],
-                #'clf__min_samples_leaf': [1, 2, 4],
-                #'clf__min_samples_split': [2, 5, 10],
-                "clf__n_estimators": range(10, 110, 10),
-                "vect__content_tfidf__tfidf__max_features": range(300, 1000, 100),
-                "vect__subject_tfidf__tfidf__max_features": range(30, 110, 10),
+                "clf__min_samples_leaf": [1, 2, 4],
+                "clf__min_samples_split": [2, 5, 10],
+                "clf__n_estimators": range(100, 190, 10),
+                "vect__content_tfidf__tfidf__max_features": range(600, 1200, 100),
+                "vect__subject_tfidf__tfidf__max_features": range(30, 130, 10),
             },
         ),
     ]
@@ -99,10 +107,16 @@ if __name__ == "__main__":
     ]
     """
 
-    classify(
-        classifiers,
-        args.training_folder,
-        args.testing_folder,
-        force=args.force,
-        plot=args.plot,
-    )
+    if all_actions or "extract" in actions:
+        extract(args.training_folder, force=True)
+        extract(args.testing_folder, force=True)
+
+    if all_actions or "preprocess" in actions:
+        preprocess(args.training_folder, force=True)
+        preprocess(args.testing_folder, force=True)
+
+    if all_actions or "classify" in actions:
+        classify(classifiers, args.training_folder, args.testing_folder, plot=args.plot)
+
+    if all_actions or "analyse" in actions:
+        analyse(args.training_folder, args.testing_folder, args.analyse_folder)

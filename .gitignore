@@ -8,6 +8,7 @@ __pycache__/
 data/*/labels/
 data/*/saved/
 data/*/preprocessed/
+data/analyse/*
 data/*/extracted.csv
 data/*/preprocessed.csv
 
