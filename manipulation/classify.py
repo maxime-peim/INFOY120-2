@@ -111,7 +111,7 @@ def classify(
         print("=" * 80)
         print(clf.__class__.__name__)
         results.append(
-            utils.benchmark_classifier(
+            benchmark_classifier(
                 gs_vect,
                 list(parameters.keys()),
                 output_folder,
