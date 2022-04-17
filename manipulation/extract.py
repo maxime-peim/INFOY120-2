@@ -84,5 +84,6 @@ def extract(folder: Path, force=False) -> DataFrame:
     extracted_df.fillna("", inplace=True)
     extracted_df.to_csv(extracted_file)
 
+    sys.stdout.write("\033[K")
     print(" done extracting", flush=True)
     return extracted_df
