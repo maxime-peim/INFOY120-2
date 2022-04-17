@@ -36,6 +36,11 @@ from . import utils
 if TYPE_CHECKING:
     from pathlib import Path
 
+def load_json(s):
+    try:
+        return json.loads(s)
+    except:
+        return None
 
 def analyse(training_folder: Path, testing_folder: Path, analyse_folder: Path):
 
@@ -90,6 +95,8 @@ def analyse(training_folder: Path, testing_folder: Path, analyse_folder: Path):
     print(f" plot saved in {content_length_path}")
 
     """
+    # ugly part to plot gridsearch results and kaggle score
+    
     y_train = train_df.prediction
     clf = RandomForestClassifier(random_state=42, n_jobs=-1)
     for json_file in analyse_folder.glob("*.json"):
@@ -107,15 +114,14 @@ def analyse(training_folder: Path, testing_folder: Path, analyse_folder: Path):
         ), axis='columns')
         
         for plot_param, param_value in best_params.items():
-            if plot_param == 'clf__max_depth':
-                continue
             
-            of_interest_df = plot_df.loc[reduce(lambda a, b: a & b, (plot_df[param_name] == param_value for param_name, param_value in best_params.items() if param_name != plot_param))]
-            of_interest_df.reset_index(drop=True, inplace=True)
+            remaining_params = [param_name for param_name in best_params if param_name != plot_param]
+            of_interest_df = plot_df.loc[reduce(lambda a, b: a & b, (plot_df[param_name] == best_params[param_name] for param_name in remaining_params))]
             
             for index, rows in of_interest_df.iterrows():
                 parameters = rows.astype(int).to_dict()
                 del parameters['score']
+                print(parameters)
                 parameters['clf__max_depth'] = None if parameters['clf__max_depth'] == -1 else parameters['clf__max_depth']
                 pipeline = utils.generate_pipeline(clf)
                 pipeline.set_params(**parameters)
@@ -129,19 +135,33 @@ def analyse(training_folder: Path, testing_folder: Path, analyse_folder: Path):
             
             kaggle_process = subprocess.run(["kaggle", "competitions", "submissions", "-c", "adcg-ss14-challenge-02-spam-mails-detection", "-v"], capture_output=True, text=True)
             kaggle_results_csv = io.StringIO(kaggle_process.stdout)
-            kaggle_results = pd.read_csv(kaggle_results_csv, nrows=len(of_interest_df), usecols=['publicScore'])[::-1]
-            kaggle_results.reset_index(drop=True, inplace=True)
+            kaggle_results = pd.read_csv(kaggle_results_csv, usecols=['description', 'publicScore'])
+            kaggle_results['description'] = kaggle_results['description'].apply(load_json)
+            kaggle_results.dropna(inplace=True)
+            kaggle_results = pd.concat((
+                kaggle_results,
+                pd.DataFrame(kaggle_results['description'].tolist())
+            ), axis='columns')
+            kaggle_results.drop(columns='description', inplace=True)
+            kaggle_results.fillna(-1, inplace=True)
+            kaggle_results.drop_duplicates(inplace=True)
+            kaggle_results = kaggle_results.loc[reduce(lambda a, b: a & b, (kaggle_results[param_name] == best_params[param_name] for param_name in remaining_params))]
+            kaggle_results.set_index(list(best_params), inplace=True)
+            of_interest_df.set_index(list(best_params), inplace=True)
             of_interest_df = pd.concat((
                 of_interest_df,
                 kaggle_results
             ), axis='columns')
             of_interest_df.rename(columns={'score': 'Local F1 score', 'publicScore': 'Kaggle accuracy score'}, inplace=True)
+            param_index = of_interest_df.index.names.index(plot_param)
+            best_kaggle_param_value = of_interest_df['Kaggle accuracy score'].idxmax()[param_index]
             
             param_plot_path = analyse_folder.joinpath(f'{plot_param}_plot.png')
             f1_plot = sns.lineplot(x=plot_param, y="Local F1 score", data=of_interest_df, color='blue')
             kaggle_plot = sns.lineplot(x=plot_param, y="Kaggle accuracy score", data=of_interest_df, color='green')
-            sns.scatterplot(data={param_value: of_interest_df['Local F1 score'].max()}, legend=False, zorder=10, color="red")
+            sns.scatterplot(data={param_value: of_interest_df['Local F1 score'].max()}, legend=False, zorder=10, marker='o', color='red')
+            sns.scatterplot(data={best_kaggle_param_value: of_interest_df['Kaggle accuracy score'].max()}, legend=False, zorder=10, marker='s', color='red')
             f1_plot.set(xlabel=plot_param.replace('_', ' '), ylabel="scores")
-            plt.legend(loc='best', labels=['Local F1 score', 'Kaggle accuracy score'])
+            plt.legend(loc='best', labels=['Local F1 score', 'Kaggle accuracy score', 'Best F1 score', 'Best Kaggle score'])
             utils.save_plot(param_plot_path)
     """
